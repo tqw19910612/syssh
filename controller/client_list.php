@@ -7,8 +7,9 @@ if(is_posted('delete')){
 $q="
 SELECT client.id,client.name,client.abbreviation,client.time,client.comment,
 	phone.content AS phone,address.content AS address
-FROM `client` LEFT JOIN (
-	SELECT client,GROUP_CONCAT(content) AS content FROM client_contact WHERE type IN('手机','固定电话') GROUP BY client
+FROM `client` 
+	LEFT JOIN (
+		SELECT client,GROUP_CONCAT(content) AS content FROM client_contact WHERE type IN('手机','固定电话') GROUP BY client
 	)phone ON client.id=phone.client
 	LEFT JOIN (
 		SELECT client,GROUP_CONCAT(content) AS content FROM client_contact WHERE type='地址' GROUP BY client
@@ -16,21 +17,30 @@ FROM `client` LEFT JOIN (
 WHERE display=1 AND classification='客户'
 ";
 
+$q_rows="
+	SELECT COUNT(client.id)
+	FROM `client` 
+	WHERE display=1 AND classification='客户'
+";
+
+$condition='';
 if(got('potential')){
-	$q.=" AND type='潜在客户'";
+	$condition.=" AND type='潜在客户'";
 
 }else{
-	$q.="
+	$condition.="
 		AND type='成交客户'
 		AND client.id IN (SELECT client FROM case_client WHERE `case` IN (SELECT `case` FROM case_lawyer WHERE lawyer='".$_SESSION['id']."'))
 ";
 }
 
-$search_bar=processSearch($q,array('name'=>'姓名','work_for'=>'单位','address'=>'地址','comment'=>'备注'));
+$search_bar=processSearch($condition,array('name'=>'姓名','work_for'=>'单位','address'=>'地址','comment'=>'备注'));
 
-processOrderby($q,'time','DESC',array('abbreviation','type','address','comment'));
+processOrderby($condition,'time','DESC',array('abbreviation','type','address','comment'));
 
-$listLocator=processMultiPage($q);
+$q.=$condition;$q_rows.=$condition;
+
+$listLocator=processMultiPage($q,$q_rows);
 
 $field=array(
 	'abbreviation'=>array('title'=>'名称','content'=>'<input type="checkbox" name="client_check[{id}]" />
