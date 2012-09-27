@@ -13,7 +13,7 @@ function case_fetch($id){
 }
 
 function case_add($data){
-    $field=array('classification','type','stage','name_extra','query_type','first_contact','time_contact','time_end','quote','timing_fee','focus','summary','filed');
+	$field=db_list_fields('case');
     $data=array_keyfilter($data,$field);
     $data['display']=1;
     $data+=uidTime();
@@ -22,7 +22,7 @@ function case_add($data){
 }
 
 function case_update($case_id,$data){
-    $field=array('classification','type','stage','name_extra','query_type','first_contact','time_contact','time_end','quote','timing_fee','focus','summary','filed');
+	$field=db_list_fields('case');
     $data=array_keyfilter($data,$field);
 	$data+=uidTime();
     
@@ -47,7 +47,7 @@ function case_addFee($case,$data){
 }
 
 function case_addFeeTiming($case,$data){
-	//TODO
+	//TODO case_addFeeTiming
 }
 
 function case_addLawyer($case,$data){
@@ -68,25 +68,66 @@ function case_addLawyer($case,$data){
 	
 	return db_insert('case_lawyer',$data);
 }
-
-function case_getStatus($is_reviewed,$locked,$contribute_sum,$uncollected,$filed){
+function case_getStatus($is_reviewed,$locked,$apply_file,$is_query,$finance_review,$info_review,$manager_review,$filed,$contribute_sum,$uncollected){
 	$status_expression='';
+
+	$file_review=array(
+		'finance'=>$finance_review,
+		'info'=>$info_review,
+		'manager'=>$manager_review,
+		'filed'=>$filed
+	);
 	
-	if($filed=='咨询'){
+	$file_review_name=array(
+		'finance'=>'财务审核',
+		'info'=>'信息审核',
+		'manager'=>'主管审核',
+		'filed'=>'实体归档'
+	);
+	
+	$status_color=array(
+		-1=>'800',//红：异常
+		0=>'000',//黑：正常
+		1=>'080',//绿：完成
+		2=>'F80',//黄：警告，提示
+		3=>'08F',//蓝：超目标完成
+		4=>'888'//灰：忽略
+	);
+	
+	if($is_query){
 		return '咨询';
 
-	}elseif($filed!='在办'){
-		switch($filed){
-			case '财务审核':$status_expression.='<span title="财务审核中" style="color:#800">财</span>';break;
-			case '信息审核':$status_expression.='<span title="信息审核中" style="color:#F80">信</span>';break;
-			case '主管审核':$status_expression.='<span title="主管审核中" style="color:#F80">主</span>';break;
-			case '已归档':$status_expression.='<span title="已归档" style="color:#888">档</span>';break;
-			default:;
+	}elseif($apply_file){
+		$review_status=0;//归档审核状态
+		if($finance_review==1 && $info_review==1 && $manager_review==1){
+			$review_status=1;
+		}elseif($finance_review==-1 || $info_review==-1 || $manager_review==-1){
+			$review_status=-1;
+		}elseif($finance_review==1 || $info_review==1 || $manager_review==1){
+			$review_status=2;
 		}
-	}elseif($is_reviewed){
-		$status_expression.='<span title="已通过立案审核" style="color:#080">审</span>';
+		
+		$review_status_string='';
+		
+		foreach($file_review as $name => $value){
+			switch($value){
+				case 1:$review_status_string.=$file_review_name[$name].'：通过';break;
+				case -1:$review_status_string.=$file_review_name[$name].'：驳回';break;
+				case 0:$review_status_string.=$file_review_name[$name].'：等待';
+			}
+			$review_status_string.="\n";
+		}
+		
+		$status_expression.='<span title="'.$review_status_string.'" style="color:#'.$status_color[$review_status].'">归</span>';
+
 	}else{
-		$status_expression.='<span title="未通过立案审核" style="color:#800">审</span>';
+		$review_status_string='';
+		switch($is_reviewed){
+			case 1:$review_status_string.='立案审核：通过';break;
+			case -1:$review_status_string.='立案审核：驳回';break;
+			case 0:$review_status_string.='立案审核：等待';
+		}
+		$status_expression.='<span title="'.$review_status_string.'" style="color:#'.$status_color[$is_reviewed].'">立</span>';
 	}
 	
 	if($locked){
@@ -117,7 +158,7 @@ function case_getStatus($is_reviewed,$locked,$contribute_sum,$uncollected,$filed
 }
 
 function case_getStatusById($case_id){
-	$case_data=db_fetch_first("SELECT is_reviewed,type_lock,client_lock,lawyer_lock,fee_lock,filed FROM `case` WHERE id = '".$case_id."'");
+	$case_data=db_fetch_first("SELECT is_reviewed,type_lock,client_lock,lawyer_lock,fee_lock,is_query,apply_file,finance_review,info_review,manager_review,filed FROM `case` WHERE id = '".$case_id."'");
 	extract($case_data);
 	if($type_lock && $client_lock && $lawyer_lock && $fee_lock){
 		$locked=true;
@@ -128,11 +169,11 @@ function case_getStatusById($case_id){
 	$uncollected=db_fetch_field("
 		SELECT IF(amount_sum IS NULL,fee_sum,fee_sum-amount_sum) AS uncollected FROM
 		(
-			SELECT `case`,SUM(fee) AS fee_sum FROM case_fee WHERE type<>'办案费' AND reviewed=0 AND `case`='".post('case/id')."'
+			SELECT `case`,SUM(fee) AS fee_sum FROM case_fee WHERE type<>'办案费' AND reviewed=0 AND `case`='".$case_id."'
 		)case_fee_grouped
-		LEFT JOIN
+		INNER JOIN
 		(
-			SELECT `case`, SUM(amount) AS amount_sum FROM account WHERE reviewed=0 AND `case`='".$case_id."'
+			SELECT `case`, SUM(amount) AS amount_sum FROM account WHERE `case`='".$case_id."'
 		)account_grouped
 		USING (`case`)
 	");
@@ -143,7 +184,7 @@ function case_getStatusById($case_id){
 		WHERE `case`='".$case_id."'
 	");
 	
-	return case_getStatus($is_reviewed,$locked,$contribute_sum,$uncollected,$filed);
+	return case_getStatus($is_reviewed,$locked,$apply_file,$is_query,$finance_review,$info_review,$manager_review,$filed,$contribute_sum,$uncollected);
 }
 
 function case_reviewMessage($reviewWord,$lawyers){
@@ -444,7 +485,7 @@ function case_getStaffList($case_id,$staff_lock,$timing_fee){
 			lawyer_hour.hours_sum
 		FROM 
 			case_lawyer	INNER JOIN staff ON staff.id=case_lawyer.lawyer
-			LEFT JOIN account ON case_lawyer.case=account.case AND account.name IN ('律师费','顾问费','咨询费')
+			LEFT JOIN account ON case_lawyer.case=account.case AND account.name <> '办案费'
 			LEFT JOIN (
 				SELECT uid,SUM(hours_checked) AS hours_sum FROM schedule WHERE schedule.`case`='".$case_id."' AND hours_checked IS NOT NULL GROUP BY uid
 			)lawyer_hour
@@ -471,7 +512,7 @@ function case_getStaffList($case_id,$staff_lock,$timing_fee){
 		return \$hours_sum_string.'<span>{contribute}'.('{contribute_amount}'?' ({contribute_amount})':'').'</span>';
 	",'orderby'=>false);
 	
-	if(!$staff_lock || is_logged('manager')){
+	if(!$staff_lock){
 		//律师锁定时不显示删除按钮
 		$field['lawyer_name']['title']='<input type="submit" name="submit[case_lawyer_delete]" value="删" />'.$field['lawyer_name']['title'];
 		$field['lawyer_name']['content']='<input type="checkbox" name="case_lawyer_check[{id}]">'.$field['lawyer_name']['content'];
@@ -507,8 +548,11 @@ function case_getFeeList($case_id,$fee_lock){
 		)
 	);
 	
-	if(!$fee_lock || is_logged('finance')){
+	if(!$fee_lock){
 		$field['type']['title']='<input type="submit" name="submit[case_fee_delete]" value="删" />'.$field['type']['title'];
+	}
+
+	if(!$fee_lock || is_logged('finance')){
 		$field['type']['content']='<input type="checkbox" name="case_fee_check[{id}]" >'.$field['type']['content'];
 	}
 	
@@ -530,7 +574,7 @@ function case_getFeeMiscList($case_list,$fee_lock){
 		GROUP BY case_fee.id";
 	
 	$field=array(
-		'receiver'=>array('title'=>'收款方','content'=>'<input type="checkbox" name="case_fee_check[{id}]" />{receiver}','orderby'=>false),
+		'receiver'=>array('title'=>'收款方','content'=>'{receiver}','orderby'=>false),
 		'fee'=>array('title'=>'数额','eval'=>true,'content'=>"
 			return '{fee}'.('{fee_received}'==''?'':' （到账：{fee_received}）');
 		",'orderby'=>false),
@@ -543,6 +587,7 @@ function case_getFeeMiscList($case_list,$fee_lock){
 	
 	if(!$fee_lock){
 		$field['receiver']['title']='<input type="submit" name="submit[case_fee_delete]" value="删" />'.$field['receiver']['title'];
+		$field['receiver']['content']='<input type="checkbox" name="case_fee_check[{id}]" />';
 	}
 	
 	return fetchTableArray($query,$field);
